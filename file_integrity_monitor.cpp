@@ -3,62 +3,52 @@
 #include <string>
 #include <map>
 #include <filesystem>
-#include <openssl/md5.h>
 #include <iomanip>
 #include <sstream>
 #include <ctime>
 
 namespace fs = std::filesystem;
 
-class FileIntegrityMonitor {
+class SimpleFileIntegrityMonitor {
 private:
     std::map<std::string, std::string> fileHashes;
     std::string databaseFile;
 
-    // Calculate MD5 hash of a file
-    std::string calculateMD5(const std::string& filepath) {
-        std::ifstream file(filepath, std::ifstream::binary);
+    // Simple checksum calculation (alternative to MD5 if OpenSSL is not available)
+    std::string calculateSimpleHash(const std::string& filepath) {
+        std::ifstream file(filepath, std::ios::binary);
         if (!file) {
             return "";
         }
 
-        MD5_CTX md5Context;
-        MD5_Init(&md5Context);
-
-        char buffer[1024];
-        while (file.read(buffer, sizeof(buffer))) {
-            MD5_Update(&md5Context, buffer, file.gcount());
-        }
-        MD5_Update(&md5Context, buffer, file.gcount());
-
-        unsigned char result[MD5_DIGEST_LENGTH];
-        MD5_Final(result, &md5Context);
-
-        std::stringstream ss;
-        for (int i = 0; i < MD5_DIGEST_LENGTH; i++) {
-            ss << std::hex << std::setw(2) << std::setfill('0') << (int)result[i];
+        unsigned long hash = 5381;
+        char c;
+        
+        while (file.get(c)) {
+            hash = ((hash << 5) + hash) + static_cast<unsigned char>(c);
         }
 
         file.close();
+        
+        std::stringstream ss;
+        ss << std::hex << std::setw(16) << std::setfill('0') << hash;
         return ss.str();
     }
 
-    // Get current timestamp
     std::string getCurrentTime() {
         time_t now = time(0);
         char* dt = ctime(&now);
         std::string timestamp(dt);
-        timestamp.pop_back(); // Remove newline
+        timestamp.pop_back();
         return timestamp;
     }
 
 public:
-    FileIntegrityMonitor(const std::string& dbFile = "fim_database.txt") 
+    SimpleFileIntegrityMonitor(const std::string& dbFile = "fim_simple_database.txt") 
         : databaseFile(dbFile) {
         loadDatabase();
     }
 
-    // Load existing hash database
     void loadDatabase() {
         std::ifstream file(databaseFile);
         if (!file) {
@@ -74,7 +64,6 @@ public:
         std::cout << "Loaded " << fileHashes.size() << " files from database.\n";
     }
 
-    // Save hash database
     void saveDatabase() {
         std::ofstream file(databaseFile);
         for (const auto& pair : fileHashes) {
@@ -84,7 +73,6 @@ public:
         std::cout << "Database saved with " << fileHashes.size() << " files.\n";
     }
 
-    // Initialize monitoring for a directory
     void initializeMonitoring(const std::string& directory) {
         std::cout << "\n[INITIALIZE] Scanning directory: " << directory << "\n";
         std::cout << std::string(60, '-') << "\n";
@@ -94,7 +82,7 @@ public:
             for (const auto& entry : fs::recursive_directory_iterator(directory)) {
                 if (entry.is_regular_file()) {
                     std::string filepath = entry.path().string();
-                    std::string hash = calculateMD5(filepath);
+                    std::string hash = calculateSimpleHash(filepath);
                     
                     if (!hash.empty()) {
                         fileHashes[filepath] = hash;
@@ -112,7 +100,6 @@ public:
         saveDatabase();
     }
 
-    // Check for file changes
     void checkIntegrity(const std::string& directory) {
         std::cout << "\n[INTEGRITY CHECK] " << getCurrentTime() << "\n";
         std::cout << std::string(60, '=') << "\n";
@@ -120,12 +107,11 @@ public:
         int modified = 0, added = 0, deleted = 0, unchanged = 0;
         std::map<std::string, std::string> currentFiles;
 
-        // Scan current files
         try {
             for (const auto& entry : fs::recursive_directory_iterator(directory)) {
                 if (entry.is_regular_file()) {
                     std::string filepath = entry.path().string();
-                    std::string hash = calculateMD5(filepath);
+                    std::string hash = calculateSimpleHash(filepath);
                     
                     if (!hash.empty()) {
                         currentFiles[filepath] = hash;
@@ -137,7 +123,6 @@ public:
             return;
         }
 
-        // Check for modifications and additions
         for (const auto& pair : currentFiles) {
             const std::string& filepath = pair.first;
             const std::string& currentHash = pair.second;
@@ -155,7 +140,6 @@ public:
             }
         }
 
-        // Check for deletions
         for (const auto& pair : fileHashes) {
             if (currentFiles.find(pair.first) == currentFiles.end()) {
                 std::cout << "[DELETED] " << pair.first << "\n";
@@ -163,7 +147,6 @@ public:
             }
         }
 
-        // Update database with current state
         fileHashes = currentFiles;
 
         std::cout << std::string(60, '=') << "\n";
@@ -181,7 +164,6 @@ public:
         }
     }
 
-    // Display all monitored files
     void listMonitoredFiles() {
         std::cout << "\n[MONITORED FILES]\n";
         std::cout << std::string(60, '-') << "\n";
@@ -200,16 +182,14 @@ public:
 
 void printHelp() {
     std::cout << "\n╔════════════════════════════════════════════════════════╗\n";
-    std::cout << "║        File Integrity Monitoring Tool v1.0             ║\n";
+    std::cout << "║   Simple File Integrity Monitoring Tool v1.0          ║\n";
+    std::cout << "║   (No OpenSSL dependency - uses simple checksum)       ║\n";
     std::cout << "╚════════════════════════════════════════════════════════╝\n\n";
     std::cout << "Usage:\n";
-    std::cout << "  ./fim init <directory>     - Initialize monitoring\n";
-    std::cout << "  ./fim check <directory>    - Check for changes\n";
-    std::cout << "  ./fim list                 - List monitored files\n";
-    std::cout << "  ./fim help                 - Show this help\n\n";
-    std::cout << "Example:\n";
-    std::cout << "  ./fim init /path/to/directory\n";
-    std::cout << "  ./fim check /path/to/directory\n\n";
+    std::cout << "  ./fim_simple init <directory>     - Initialize monitoring\n";
+    std::cout << "  ./fim_simple check <directory>    - Check for changes\n";
+    std::cout << "  ./fim_simple list                 - List monitored files\n";
+    std::cout << "  ./fim_simple help                 - Show this help\n\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -219,7 +199,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::string command = argv[1];
-    FileIntegrityMonitor fim;
+    SimpleFileIntegrityMonitor fim;
 
     if (command == "init" && argc == 3) {
         std::string directory = argv[2];
